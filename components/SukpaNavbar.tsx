@@ -82,6 +82,13 @@ export default function SukpaNavbar() {
             >
               เช็คสถานะผ้า
             </Link>
+            <Link
+              href="/admin"
+              className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-full font-bold transition-all border border-slate-200 flex items-center gap-1.5"
+            >
+              <span>🔒</span>
+              <span>แอดมิน</span>
+            </Link>
           </div>
 
           {/* Right Action: Clean Single CTA Button */}
@@ -139,6 +146,13 @@ export default function SukpaNavbar() {
               className="block px-3 py-2.5 rounded-xl text-slate-700 hover:bg-slate-50 font-medium text-sm"
             >
               เช็คสถานะผ้า
+            </Link>
+            <Link
+              href="/admin"
+              onClick={() => setMobileMenuOpen(false)}
+              className="block px-3 py-2.5 rounded-xl bg-slate-100 text-slate-800 font-bold text-sm border border-slate-200"
+            >
+              🔒 เข้าสู่ระบบแอดมิน (Admin)
             </Link>
           </div>
 

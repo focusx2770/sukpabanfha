@@ -24,6 +24,12 @@ import {
   Banknote,
   LogOut,
   RefreshCw,
+  TrendingUp,
+  BarChart3,
+  PieChart,
+  Calendar,
+  Wallet,
+  Users,
 } from "lucide-react";
 import {
   getAllOrders,
@@ -140,7 +146,8 @@ export default function AdminPage() {
     sessionStorage.removeItem("sukpa_admin_auth");
   };
 
-  const [activeTab, setActiveTab] = useState<"orders" | "loyalty">("orders");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "orders" | "loyalty">("dashboard");
+  const [revenueTimeRange, setRevenueTimeRange] = useState<"all" | "today" | "week" | "month">("all");
   const [loyaltySearch, setLoyaltySearch] = useState<string>("");
   const [loyaltyCustomer, setLoyaltyCustomer] = useState<any>(null);
   const [loyaltyMsg, setLoyaltyMsg] = useState<string>("");
@@ -250,6 +257,92 @@ export default function AdminPage() {
   ).length;
   const completedOrdersCount = orders.filter((o) => o.status === "completed").length;
 
+  // Time-filtered orders for revenue analysis
+  const timeFilteredOrders = orders.filter((o) => {
+    if (revenueTimeRange === "all") return true;
+    const orderDate = new Date(o.createdAt || Date.now());
+    const now = new Date();
+
+    if (revenueTimeRange === "today") {
+      return (
+        orderDate.getFullYear() === now.getFullYear() &&
+        orderDate.getMonth() === now.getMonth() &&
+        orderDate.getDate() === now.getDate()
+      );
+    }
+    if (revenueTimeRange === "week") {
+      const diffDays = (now.getTime() - orderDate.getTime()) / (1000 * 3600 * 24);
+      return diffDays <= 7;
+    }
+    if (revenueTimeRange === "month") {
+      const diffDays = (now.getTime() - orderDate.getTime()) / (1000 * 3600 * 24);
+      return diffDays <= 30;
+    }
+    return true;
+  });
+
+  // Calculate detailed financial metrics
+  const periodTotalRevenue = timeFilteredOrders.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+  const periodPromptPayRevenue = timeFilteredOrders
+    .filter((o) => o.paymentMethod === "promptpay")
+    .reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+  const periodCashRevenue = timeFilteredOrders
+    .filter((o) => o.paymentMethod && o.paymentMethod.startsWith("cash"))
+    .reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+
+  const avgOrderTicket =
+    timeFilteredOrders.length > 0
+      ? Math.round(periodTotalRevenue / timeFilteredOrders.length)
+      : 0;
+
+  // Wash size breakdown
+  const washCounts: { [key: string]: number } = {};
+  timeFilteredOrders.forEach((o) => {
+    const key = o.washName || "ไม่ระบุ";
+    washCounts[key] = (washCounts[key] || 0) + 1;
+  });
+
+  // Dry size breakdown
+  const dryCounts: { [key: string]: number } = {};
+  timeFilteredOrders.forEach((o) => {
+    const key = o.dryName || "ไม่ระบุ";
+    dryCounts[key] = (dryCounts[key] || 0) + 1;
+  });
+
+  // Phase breakdown
+  const phaseStats: { [key: string]: { count: number; revenue: number } } = {};
+  timeFilteredOrders.forEach((o) => {
+    const p = o.phase || "อื่นๆ";
+    if (!phaseStats[p]) phaseStats[p] = { count: 0, revenue: 0 };
+    phaseStats[p].count += 1;
+    phaseStats[p].revenue += Number(o.total) || 0;
+  });
+
+  const topPhases = Object.entries(phaseStats)
+    .sort((a, b) => b[1].revenue - a[1].revenue)
+    .slice(0, 5);
+
+  // Group by date for daily revenue table
+  const dailyStats: { [key: string]: { count: number; promptpay: number; cash: number; total: number } } = {};
+  timeFilteredOrders.forEach((o) => {
+    const dateStr = o.createdAt ? o.createdAt.slice(0, 10) : new Date().toISOString().slice(0, 10);
+    if (!dailyStats[dateStr]) {
+      dailyStats[dateStr] = { count: 0, promptpay: 0, cash: 0, total: 0 };
+    }
+    dailyStats[dateStr].count += 1;
+    const amt = Number(o.total) || 0;
+    dailyStats[dateStr].total += amt;
+    if (o.paymentMethod === "promptpay") {
+      dailyStats[dateStr].promptpay += amt;
+    } else {
+      dailyStats[dateStr].cash += amt;
+    }
+  });
+
+  const dailyRows = Object.entries(dailyStats)
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .slice(0, 10);
+
   // Filtered orders
   const filteredOrders = orders.filter((o) => {
     const matchSearch =
@@ -343,6 +436,15 @@ export default function AdminPage() {
           </div>
 
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => loadOrders()}
+              disabled={isLoadingOrders}
+              className="p-2 sm:px-3 sm:py-1.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="รีเฟรชข้อมูลจากระบบ"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-sky-600 ${isLoadingOrders ? "animate-spin" : ""}`} />
+              <span className="hidden sm:inline">{isLoadingOrders ? "กำลังโหลด..." : "รีเฟรชข้อมูล"}</span>
+            </button>
             <Link
               href="/"
               target="_blank"
@@ -416,40 +518,264 @@ export default function AdminPage() {
 
         {/* Tab Navigation & Action Buttons */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0">
+            <button
+              onClick={() => setActiveTab("dashboard")}
+              className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
+                activeTab === "dashboard"
+                  ? "bg-gradient-to-r from-sky-500 to-blue-600 text-white shadow-sm"
+                  : "bg-white text-slate-600 hover:bg-slate-50 border border-slate-200"
+              }`}
+            >
+              <span>📊 แดชบอร์ดรายได้ & สถิติ</span>
+            </button>
             <button
               onClick={() => setActiveTab("orders")}
-              className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 transition-all cursor-pointer ${
+              className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
                 activeTab === "orders"
                   ? "bg-sky-600 text-white shadow-sm"
                   : "bg-white text-slate-600 hover:bg-slate-50 border border-slate-200"
               }`}
             >
-              <span>📦 รายการออเดอร์ซัก-อบ</span>
+              <span>📦 รายการออเดอร์</span>
               <span className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full">{orders.length}</span>
             </button>
             <button
               onClick={() => setActiveTab("loyalty")}
-              className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 transition-all cursor-pointer ${
+              className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
                 activeTab === "loyalty"
                   ? "bg-emerald-600 text-white shadow-sm"
                   : "bg-white text-slate-600 hover:bg-slate-50 border border-slate-200"
               }`}
             >
-              <span>🎁 จัดการแต้มสะสม 10 ฟรี 1</span>
+              <span>🎁 แต้มสะสม 10 ฟรี 1</span>
             </button>
           </div>
 
           {/* Quick Add Order from LINE button */}
           <button
             onClick={() => setIsQuickOrderOpen(true)}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#06C755] hover:bg-[#05b34c] text-white font-bold text-xs shadow-md shadow-emerald-600/20 active:scale-95 transition-all self-start sm:self-auto cursor-pointer"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#06C755] hover:bg-[#05b34c] text-white font-bold text-xs shadow-md shadow-emerald-600/20 active:scale-95 transition-all self-start sm:self-auto cursor-pointer whitespace-nowrap"
           >
             <span>💬 + บันทึกออเดอร์จาก LINE</span>
           </button>
         </div>
 
-        {activeTab === "loyalty" ? (
+        {activeTab === "dashboard" ? (
+          /* Revenue & Analytics Dashboard Tab */
+          <div className="space-y-6 animate-fadeIn">
+            {/* Time Range Selector & Header */}
+            <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-black text-slate-900 flex items-center gap-2">
+                  <span>📊 แดชบอร์ดวิเคราะห์ยอดรายได้</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  ภาพรวมรายรับ ช่องทางการชำระเงิน และสถิติการใช้งานบริการซักป่ะ?
+                </p>
+              </div>
+
+              <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-2xl self-start sm:self-auto text-xs font-bold">
+                {[
+                  { id: "all", label: "ทั้งหมด" },
+                  { id: "today", label: "วันนี้" },
+                  { id: "week", label: "7 วันล่าสุด" },
+                  { id: "month", label: "30 วันล่าสุด" },
+                ].map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => setRevenueTimeRange(t.id as any)}
+                    className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${
+                      revenueTimeRange === t.id
+                        ? "bg-white text-sky-700 shadow-xs"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Financial Highlight Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-gradient-to-br from-sky-500 to-blue-600 rounded-3xl p-5 text-white shadow-lg shadow-sky-500/20">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-sky-100 font-bold uppercase tracking-wider">รายได้รวมช่วงนี้</span>
+                  <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center text-lg">💰</div>
+                </div>
+                <div className="text-3xl font-black">{periodTotalRevenue.toLocaleString()} <span className="text-sm font-normal text-sky-100">บาท</span></div>
+                <div className="mt-2 text-[11px] text-sky-100 flex items-center gap-1.5">
+                  <span>จาก {timeFilteredOrders.length} ออเดอร์</span>
+                  <span>•</span>
+                  <span>เฉลี่ย ฿{avgOrderTicket}/คิว</span>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-3xl p-5 border border-slate-200 shadow-xs">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">โอนพร้อมเพย์ (QR)</span>
+                  <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold text-sm">📱</div>
+                </div>
+                <div className="text-3xl font-black text-slate-900">{periodPromptPayRevenue.toLocaleString()} <span className="text-sm font-normal text-slate-400">บาท</span></div>
+                <div className="mt-2 text-[11px] text-slate-500">
+                  {periodTotalRevenue > 0 ? Math.round((periodPromptPayRevenue / periodTotalRevenue) * 100) : 0}% ของรายได้ทั้งหมด
+                </div>
+              </div>
+
+              <div className="bg-white rounded-3xl p-5 border border-slate-200 shadow-xs">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">เก็บเงินสด (Cash)</span>
+                  <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold text-sm">💵</div>
+                </div>
+                <div className="text-3xl font-black text-slate-900">{periodCashRevenue.toLocaleString()} <span className="text-sm font-normal text-slate-400">บาท</span></div>
+                <div className="mt-2 text-[11px] text-slate-500">
+                  {periodTotalRevenue > 0 ? Math.round((periodCashRevenue / periodTotalRevenue) * 100) : 0}% ของรายได้ทั้งหมด
+                </div>
+              </div>
+
+              <div className="bg-white rounded-3xl p-5 border border-slate-200 shadow-xs">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">อัตราจัดส่งสำเร็จ</span>
+                  <div className="w-9 h-9 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center font-bold text-sm">🎯</div>
+                </div>
+                <div className="text-3xl font-black text-purple-600">
+                  {timeFilteredOrders.length > 0 ? Math.round((completedOrdersCount / timeFilteredOrders.length) * 100) : 0}%
+                </div>
+                <div className="mt-2 text-[11px] text-slate-500">
+                  ส่งสำเร็จ {completedOrdersCount} จาก {timeFilteredOrders.length} คิว
+                </div>
+              </div>
+            </div>
+
+            {/* Analytics Grid: Machines & Top Phases */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+              {/* Popular Machines Breakdown */}
+              <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-black text-slate-900 text-sm flex items-center gap-2">
+                    <span>🫧 สถิติขนาดเครื่องซักยอดนิยม</span>
+                  </h4>
+                  <span className="text-[11px] text-slate-400 font-medium">{timeFilteredOrders.length} ครั้ง</span>
+                </div>
+
+                <div className="space-y-3">
+                  {Object.entries(washCounts).length === 0 ? (
+                    <p className="text-xs text-slate-400 text-center py-6">ยังไม่มีข้อมูลในช่วงเวลานี้</p>
+                  ) : (
+                    Object.entries(washCounts).map(([name, count]) => {
+                      const pct = Math.round((count / (timeFilteredOrders.length || 1)) * 100);
+                      return (
+                        <div key={name} className="space-y-1">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-semibold text-slate-700">{name}</span>
+                            <span className="text-slate-500 font-bold">{count} ครั้ง ({pct}%)</span>
+                          </div>
+                          <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
+                            <div
+                              className="h-full bg-gradient-to-r from-sky-500 to-blue-600 rounded-full"
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* Top Phases Breakdown */}
+              <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-black text-slate-900 text-sm flex items-center gap-2">
+                    <span>🏘️ 5 อันดับเฟสที่สร้างรายได้สูงสุด</span>
+                  </h4>
+                  <span className="text-[11px] text-slate-400 font-medium">บ้านฟ้าปิยรมณ์</span>
+                </div>
+
+                <div className="space-y-3">
+                  {topPhases.length === 0 ? (
+                    <p className="text-xs text-slate-400 text-center py-6">ยังไม่มีข้อมูลในช่วงเวลานี้</p>
+                  ) : (
+                    topPhases.map(([phaseName, data], idx) => {
+                      const pct = periodTotalRevenue > 0 ? Math.round((data.revenue / periodTotalRevenue) * 100) : 0;
+                      return (
+                        <div key={phaseName} className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 border border-slate-100">
+                          <div className="flex items-center gap-3">
+                            <div className="w-6 h-6 rounded-lg bg-sky-100 text-sky-700 font-black text-xs flex items-center justify-center">
+                              #{idx + 1}
+                            </div>
+                            <div>
+                              <span className="font-bold text-slate-800 text-xs block">{phaseName}</span>
+                              <span className="text-[11px] text-slate-500">{data.count} ออเดอร์</span>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <span className="font-black text-slate-900 text-sm block">฿{data.revenue.toLocaleString()}</span>
+                            <span className="text-[10px] text-slate-400 font-semibold">{pct}% ของยอดรวม</span>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Daily Revenue Table */}
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden">
+              <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+                <div>
+                  <h4 className="font-black text-slate-900 text-sm">📅 สรุปรายได้แยกตามวัน (Daily Revenue)</h4>
+                  <p className="text-[11px] text-slate-500 mt-0.5">สรุปยอดเงินสด พร้อมเพย์ และจำนวนคิวในแต่ละวัน</p>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
+                    <tr>
+                      <th className="py-3 px-4">วันที่</th>
+                      <th className="py-3 px-4 text-center">จำนวนคิว</th>
+                      <th className="py-3 px-4 text-right">ยอดพร้อมเพย์</th>
+                      <th className="py-3 px-4 text-right">ยอดเงินสด</th>
+                      <th className="py-3 px-4 text-right">รวมรายได้สุทธิ</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {dailyRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="py-8 text-center text-slate-400">
+                          ยังไม่มีประวัติรายได้ในช่วงเวลานี้
+                        </td>
+                      </tr>
+                    ) : (
+                      dailyRows.map(([dateStr, row]) => (
+                        <tr key={dateStr} className="hover:bg-slate-50/70 transition-colors">
+                          <td className="py-3.5 px-4 font-bold text-slate-800">{dateStr}</td>
+                          <td className="py-3.5 px-4 text-center">
+                            <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-bold text-[11px]">
+                              {row.count} คิว
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-semibold text-blue-600">
+                            ฿{row.promptpay.toLocaleString()}
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-semibold text-emerald-600">
+                            ฿{row.cash.toLocaleString()}
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-black text-slate-900 text-sm">
+                            ฿{row.total.toLocaleString()}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        ) : activeTab === "loyalty" ? (
           /* Loyalty Customer Management Tab */
           <div className="space-y-6">
             <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
