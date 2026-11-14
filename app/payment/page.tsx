@@ -7,6 +7,7 @@ import SukpaNavbar from "@/components/SukpaNavbar";
 import SukpaFooter from "@/components/SukpaFooter";
 import { PROMPTPAY_CONFIG } from "@/lib/sukpaPricing";
 import { getPromptPayQRUrl } from "@/lib/promptpay";
+import { saveOrder } from "@/lib/sukpaDb";
 import {
   ShieldCheck,
   CheckCircle2,
@@ -81,38 +82,28 @@ function PaymentContent() {
   };
 
   // Submit payment confirmation
-  const handleSubmitPayment = (e: React.FormEvent) => {
+  const handleSubmitPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!slipPreview) {
       alert("กรุณาแนบรูปสลิปการโอนเงินก่อนกดยืนยันครับ");
       return;
     }
 
-    if (typeof window !== "undefined") {
-      const existingOrders = JSON.parse(localStorage.getItem("sukpa_orders") || "[]");
-      const updatedOrder = {
-        ...(order || {}),
-        orderId: orderId || `SP-${Date.now().toString().slice(-6)}`,
-        name: customerName || "ลูกค้าบ้านฟ้าปิยรมณ์",
-        phone: phone || "08X-XXX-XXXX",
-        total: amount,
-        paymentMethod: "promptpay",
-        slipPreview: slipPreview,
-        status: "slip_uploaded",
-        statusText: "รับแจ้งชำระเงินแล้ว (รอตรวจสอบ)",
-        paidAt: new Date().toISOString(),
-      };
+    const updatedOrder: any = {
+      ...(order || {}),
+      orderId: orderId || `SP-${Date.now().toString().slice(-6)}`,
+      name: customerName || "ลูกค้าบ้านฟ้าปิยรมณ์",
+      phone: phone || "08X-XXX-XXXX",
+      total: amount,
+      paymentMethod: "promptpay",
+      slipPreview: slipPreview,
+      status: "slip_uploaded",
+      statusText: "รับแจ้งชำระเงินแล้ว (รอตรวจสอบ)",
+      paidAt: new Date().toISOString(),
+    };
 
-      const foundIndex = existingOrders.findIndex((o: any) => o.orderId === updatedOrder.orderId);
-      if (foundIndex >= 0) {
-        existingOrders[foundIndex] = updatedOrder;
-      } else {
-        existingOrders.unshift(updatedOrder);
-      }
-
-      localStorage.setItem("sukpa_orders", JSON.stringify(existingOrders));
-      localStorage.setItem("current_sukpa_order", JSON.stringify(updatedOrder));
-    }
+    // บันทึกลง Supabase Database + LocalStorage
+    await saveOrder(updatedOrder);
 
     setIsSubmitted(true);
   };

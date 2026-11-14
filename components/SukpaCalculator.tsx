@@ -11,6 +11,7 @@ import {
   formatLineBookingMessage,
   OrderState,
 } from "@/lib/sukpaPricing";
+import { saveOrder } from "@/lib/sukpaDb";
 import SukpaTermsModal from "@/components/SukpaTermsModal";
 import {
   Sparkles,
@@ -117,43 +118,39 @@ export default function SukpaCalculator() {
   };
 
   // Handle final confirmation from Terms Modal
-  const handleConfirmedFromModal = (method: "promptpay" | "cash_pickup" | "cash_delivery") => {
+  const handleConfirmedFromModal = async (method: "promptpay" | "cash_pickup" | "cash_delivery") => {
     setIsTermsModalOpen(false);
 
-    if (typeof window !== "undefined") {
-      const orderPayload = {
-        ...currentOrder,
-        paymentMethod: method,
-        total: calc.total,
-        washPrice: calc.washPrice,
-        dryPrice: calc.dryPrice,
-        detergentPrice: calc.detergentPrice,
-        serviceFee: calc.serviceFee,
-        totalDryMinutes: calc.totalDryMinutes,
-        washName: calc.washOpt.name,
-        dryName: calc.dryOpt.name,
-        status: method === "promptpay" ? "pending_payment" : "cash_pending",
-        statusText:
-          method === "promptpay"
-            ? "รอชำระเงินผ่านพร้อมเพย์"
-            : method === "cash_pickup"
-            ? "ชำระเงินสดตอนเริ่มงาน (เข้ารับผ้า)"
-            : "ชำระเงินสดหลังเลิกงาน (ส่งผ้าคืน)",
-        createdAt: new Date().toISOString(),
-      };
+    const orderPayload: any = {
+      ...currentOrder,
+      orderId: currentOrder.orderId || `SP-${Date.now().toString().slice(-6)}`,
+      paymentMethod: method,
+      total: calc.total,
+      washPrice: calc.washPrice,
+      dryPrice: calc.dryPrice,
+      detergentPrice: calc.detergentPrice,
+      serviceFee: calc.serviceFee,
+      totalDryMinutes: calc.totalDryMinutes,
+      washName: calc.washOpt.name,
+      dryName: calc.dryOpt.name,
+      status: method === "promptpay" ? "pending_payment" : "cash_pending",
+      statusText:
+        method === "promptpay"
+          ? "รอชำระเงินผ่านพร้อมเพย์"
+          : method === "cash_pickup"
+          ? "ชำระเงินสดตอนเริ่มงาน (เข้ารับผ้า)"
+          : "ชำระเงินสดหลังเลิกงาน (ส่งผ้าคืน)",
+      createdAt: new Date().toISOString(),
+    };
 
-      localStorage.setItem("current_sukpa_order", JSON.stringify(orderPayload));
+    // บันทึกลง Supabase Database + LocalStorage ทันที
+    await saveOrder(orderPayload);
 
-      const existing = JSON.parse(localStorage.getItem("sukpa_orders") || "[]");
-      existing.unshift(orderPayload);
-      localStorage.setItem("sukpa_orders", JSON.stringify(existing));
-
-      if (method === "promptpay") {
-        router.push(`/payment?orderId=${currentOrder.orderId}`);
-      } else {
-        // Cash payment directly goes to tracking
-        router.push(`/track?search=${currentOrder.phone || currentOrder.orderId}`);
-      }
+    if (method === "promptpay") {
+      router.push(`/payment?orderId=${orderPayload.orderId}`);
+    } else {
+      // Cash payment directly goes to tracking
+      router.push(`/track?search=${orderPayload.phone || orderPayload.orderId}`);
     }
   };
 

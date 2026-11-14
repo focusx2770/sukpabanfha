@@ -6,6 +6,7 @@ import Link from "next/link";
 import Image from "next/image";
 import SukpaNavbar from "@/components/SukpaNavbar";
 import SukpaFooter from "@/components/SukpaFooter";
+import { getAllOrders } from "@/lib/sukpaDb";
 import {
   Search,
   Truck,
@@ -39,40 +40,18 @@ function TrackContent() {
   const [allOrders, setAllOrders] = useState<any[]>([]);
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const savedOrders = JSON.parse(localStorage.getItem("sukpa_orders") || "[]");
-      // Add a friendly mock order if empty so the user can test right away
-      if (savedOrders.length === 0) {
-        const sampleOrder = {
-          orderId: "SP-882190",
-          name: "คุณกอล์ฟ (ตัวอย่าง)",
-          phone: "0891234567",
-          phase: "เฟส 5",
-          soi: "12",
-          addressDetails: "บ้านเลขที่ 88/123 ประตูสีขาว",
-          washName: "เครื่องซัก 14 kg",
-          waterTemp: "cold",
-          dryName: "เครื่องอบ 15 kg",
-          totalDryMinutes: 24,
-          detergentPrice: 0,
-          total: 110,
-          status: "washing",
-          createdAt: new Date().toISOString(),
-        };
-        savedOrders.push(sampleOrder);
-        localStorage.setItem("sukpa_orders", JSON.stringify(savedOrders));
-      }
-      setAllOrders(savedOrders);
+    async function loadData() {
+      const orders = await getAllOrders();
+      setAllOrders(orders);
 
-      // If initial search query is given
       if (initialSearch) {
-        doSearch(initialSearch, savedOrders);
-      } else if (savedOrders.length > 0) {
-        // default show the latest order
-        setSearchedOrder(savedOrders[0]);
+        doSearch(initialSearch, orders);
+      } else if (orders.length > 0) {
+        setSearchedOrder(orders[0]);
         setHasSearched(true);
       }
     }
+    loadData();
   }, [initialSearch]);
 
   const doSearch = (term: string, list = allOrders) => {

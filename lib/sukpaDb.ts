@@ -14,7 +14,253 @@ export interface SukpaCustomer {
   updated_at?: string;
 }
 
+export interface SukpaOrderData {
+  orderId: string;
+  phone: string;
+  name: string;
+  phase: string;
+  soi: string;
+  addressDetails: string;
+  washName?: string;
+  washSize?: string;
+  waterTemp?: string;
+  dryName?: string;
+  drySize?: string;
+  dryMinutes?: number;
+  totalDryMinutes?: number;
+  detergentType?: string;
+  detergentPrice?: number;
+  serviceFee?: number;
+  washPrice?: number;
+  dryPrice?: number;
+  total: number;
+  paymentMethod: "promptpay" | "cash_pickup" | "cash_delivery";
+  status:
+    | "pending"
+    | "pending_payment"
+    | "cash_pending"
+    | "slip_uploaded"
+    | "picked_up"
+    | "washing"
+    | "drying"
+    | "delivering"
+    | "completed";
+  statusText?: string;
+  slipPreview?: string;
+  slipUrl?: string;
+  notes?: string;
+  createdAt?: string;
+  paidAt?: string;
+}
+
 const LOCAL_CUSTOMERS_KEY = "sukpa_customers";
+const LOCAL_ORDERS_KEY = "sukpa_orders";
+
+/**
+ * แปลงออเดอร์จาก camelCase ให้เข้ากับ schema ของ Supabase (snake_case)
+ */
+function toSupabaseOrder(o: SukpaOrderData) {
+  return {
+    order_id: o.orderId,
+    phone: (o.phone || "").replace(/[^0-9]/g, ""),
+    name: o.name || "",
+    phase: o.phase || "",
+    soi: o.soi || "",
+    address_details: o.addressDetails || "",
+    wash_size: o.washName || o.washSize || "",
+    water_temp: o.waterTemp || "cold",
+    dry_size: o.dryName || o.drySize || "",
+    dry_minutes: o.totalDryMinutes || o.dryMinutes || 24,
+    detergent_type: o.detergentType || "",
+    total_price: o.total || 0,
+    payment_method: o.paymentMethod || "promptpay",
+    status: o.status || "pending",
+    slip_url: o.slipPreview || o.slipUrl || null,
+    notes: o.notes || "",
+    created_at: o.createdAt || new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+}
+
+/**
+ * แปลงออเดอร์จาก Supabase (snake_case) ให้เข้ากับ React components (camelCase)
+ */
+function fromSupabaseOrder(row: any): SukpaOrderData {
+  return {
+    orderId: row.order_id,
+    phone: row.phone,
+    name: row.name,
+    phase: row.phase,
+    soi: row.soi,
+    addressDetails: row.address_details,
+    washName: row.wash_size,
+    waterTemp: row.water_temp,
+    dryName: row.dry_size,
+    totalDryMinutes: row.dry_minutes,
+    total: Number(row.total_price) || 0,
+    paymentMethod: row.payment_method,
+    status: row.status,
+    slipPreview: row.slip_url,
+    slipUrl: row.slip_url,
+    notes: row.notes,
+    createdAt: row.created_at,
+  };
+}
+
+/**
+ * บันทึกออเดอร์ลง Supabase และ LocalStorage พร้อมกัน
+ */
+export async function saveOrder(order: SukpaOrderData): Promise<SukpaOrderData> {
+  const cleanPhone = (order.phone || "").replace(/[^0-9]/g, "");
+
+  // 1. บันทึกลง LocalStorage ทันทีเพื่อความเร็ว
+  if (typeof window !== "undefined") {
+    try {
+      const existing = JSON.parse(localStorage.getItem(LOCAL_ORDERS_KEY) || "[]");
+      const foundIdx = existing.findIndex((o: any) => o.orderId === order.orderId);
+      if (foundIdx >= 0) {
+        existing[foundIdx] = { ...existing[foundIdx], ...order };
+      } else {
+        existing.unshift(order);
+      }
+      localStorage.setItem(LOCAL_ORDERS_KEY, JSON.stringify(existing));
+      localStorage.setItem("current_sukpa_order", JSON.stringify(order));
+    } catch (e) {
+      console.error("Local storage order save error:", e);
+    }
+  }
+
+  // 2. บันทึกลง Supabase Database
+  try {
+    const sbPayload = toSupabaseOrder(order);
+    const { error } = await supabase.from("sukpa_orders").upsert(sbPayload);
+    if (error) {
+      console.error("Supabase save order error:", error);
+    }
+  } catch (err) {
+    console.warn("Supabase order upsert failed, offline fallback:", err);
+  }
+
+  // 3. บันทึกข้อมูลลูกค้าลงฐานข้อมูลด้วย (ถ้ามีเบอร์โทร)
+  if (cleanPhone) {
+    try {
+      await saveCustomer({
+        phone: cleanPhone,
+        name: order.name,
+        phase: order.phase,
+        soi: order.soi,
+        address_details: order.addressDetails,
+      });
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  return order;
+}
+
+/**
+ * ดึงรายการออเดอร์ทั้งหมด (ดึงจาก Supabase เป็นหลัก, fallback LocalStorage)
+ */
+export async function getAllOrders(): Promise<SukpaOrderData[]> {
+  try {
+    const { data, error } = await supabase
+      .from("sukpa_orders")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (!error && data && data.length > 0) {
+      const mapped = data.map(fromSupabaseOrder);
+      // Sync กลับไปเก็บใน LocalStorage
+      if (typeof window !== "undefined") {
+        localStorage.setItem(LOCAL_ORDERS_KEY, JSON.stringify(mapped));
+      }
+      return mapped;
+    }
+  } catch (err) {
+    console.warn("Supabase fetch orders error, falling back to LocalStorage:", err);
+  }
+
+  // Fallback to LocalStorage
+  if (typeof window !== "undefined") {
+    try {
+      return JSON.parse(localStorage.getItem(LOCAL_ORDERS_KEY) || "[]");
+    } catch (e) {
+      return [];
+    }
+  }
+
+  return [];
+}
+
+/**
+ * อัปเดตสถานะออเดอร์
+ */
+export async function updateOrderStatus(
+  orderId: string,
+  newStatus: SukpaOrderData["status"],
+  notes?: string
+): Promise<boolean> {
+  // 1. LocalStorage
+  if (typeof window !== "undefined") {
+    try {
+      const existing = JSON.parse(localStorage.getItem(LOCAL_ORDERS_KEY) || "[]");
+      const foundIdx = existing.findIndex((o: any) => o.orderId === orderId);
+      if (foundIdx >= 0) {
+        existing[foundIdx].status = newStatus;
+        if (notes !== undefined) existing[foundIdx].notes = notes;
+        localStorage.setItem(LOCAL_ORDERS_KEY, JSON.stringify(existing));
+      }
+    } catch (e) {
+      console.error("Local storage update error:", e);
+    }
+  }
+
+  // 2. Supabase
+  try {
+    const updateData: any = {
+      status: newStatus,
+      updated_at: new Date().toISOString(),
+    };
+    if (notes !== undefined) updateData.notes = notes;
+
+    const { error } = await supabase
+      .from("sukpa_orders")
+      .update(updateData)
+      .eq("order_id", orderId);
+
+    if (error) {
+      console.error("Supabase update status error:", error);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn("Supabase update error:", err);
+    return false;
+  }
+}
+
+/**
+ * ลบออเดอร์
+ */
+export async function deleteOrder(orderId: string): Promise<boolean> {
+  if (typeof window !== "undefined") {
+    try {
+      const existing = JSON.parse(localStorage.getItem(LOCAL_ORDERS_KEY) || "[]");
+      const filtered = existing.filter((o: any) => o.orderId !== orderId);
+      localStorage.setItem(LOCAL_ORDERS_KEY, JSON.stringify(filtered));
+    } catch (e) {
+      console.error("Local storage delete error:", e);
+    }
+  }
+
+  try {
+    const { error } = await supabase.from("sukpa_orders").delete().eq("order_id", orderId);
+    return !error;
+  } catch (e) {
+    return false;
+  }
+}
 
 /**
  * ดึงข้อมูลแต้มสะสมและโปรไฟล์ลูกค้าด้วยเบอร์โทรศัพท์
@@ -23,7 +269,7 @@ export async function getCustomerPoints(phone: string): Promise<SukpaCustomer | 
   const cleanPhone = phone.replace(/[^0-9]/g, "");
   if (!cleanPhone) return null;
 
-  // 1. ลองดึงจาก Supabase
+  // 1. ดึงจาก Supabase
   try {
     const { data, error } = await supabase
       .from("sukpa_customers")
@@ -46,7 +292,7 @@ export async function getCustomerPoints(phone: string): Promise<SukpaCustomer | 
     }
 
     // คำนวณแต้มเบื้องต้นจากประวัติ sukpa_orders ถ้ามี
-    const orders = JSON.parse(localStorage.getItem("sukpa_orders") || "[]");
+    const orders = JSON.parse(localStorage.getItem(LOCAL_ORDERS_KEY) || "[]");
     const customerOrders = orders.filter(
       (o: any) => o.phone && o.phone.replace(/[^0-9]/g, "") === cleanPhone
     );
@@ -115,7 +361,7 @@ export async function saveCustomer(customer: Partial<SukpaCustomer> & { phone: s
 }
 
 /**
- * เพิ่มแต้มสะสมเมื่อซักเสร็จสมบูรณ์ (หรือแอดมินกดให้แต้ม)
+ * เพิ่มแต้มสะสมเมื่อซักเสร็จสมบูรณ์
  */
 export async function addStampToCustomer(phone: string, amount = 1): Promise<SukpaCustomer | null> {
   let customer = await getCustomerPoints(phone);

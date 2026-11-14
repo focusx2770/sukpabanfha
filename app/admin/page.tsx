@@ -25,6 +25,16 @@ import {
   LogOut,
   RefreshCw,
 } from "lucide-react";
+import {
+  getAllOrders,
+  updateOrderStatus,
+  deleteOrder,
+  saveOrder,
+  addStampToCustomer,
+  getCustomerPoints,
+  redeemFreeReward,
+  saveCustomer,
+} from "@/lib/sukpaDb";
 
 interface SukpaOrder {
   orderId: string;
@@ -86,6 +96,8 @@ export default function AdminPage() {
   const [quickPayMethod, setQuickPayMethod] = useState<"promptpay" | "cash_pickup" | "cash_delivery">("promptpay");
   const [quickNotes, setQuickNotes] = useState<string>("สั่งผ่าน LINE OA");
 
+  const [isLoadingOrders, setIsLoadingOrders] = useState<boolean>(false);
+
   // Check login session
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -97,10 +109,15 @@ export default function AdminPage() {
     }
   }, []);
 
-  const loadOrders = () => {
-    if (typeof window !== "undefined") {
-      const saved = JSON.parse(localStorage.getItem("sukpa_orders") || "[]");
-      setOrders(saved);
+  const loadOrders = async () => {
+    setIsLoadingOrders(true);
+    try {
+      const liveOrders = await getAllOrders();
+      setOrders(liveOrders as any);
+    } catch (e) {
+      console.error("Failed to load orders:", e);
+    } finally {
+      setIsLoadingOrders(false);
     }
   };
 
@@ -112,6 +129,7 @@ export default function AdminPage() {
       setIsAuthenticated(true);
       sessionStorage.setItem("sukpa_admin_auth", "true");
       setPinError("");
+      loadOrders();
     } else {
       setPinError("รหัสผ่านไม่ถูกต้อง (PIN 6 หลัก)");
     }
@@ -128,21 +146,19 @@ export default function AdminPage() {
   const [loyaltyMsg, setLoyaltyMsg] = useState<string>("");
 
   // Update order status & automatically award stamp if completed
-  const handleUpdateStatus = (orderId: string, newStatus: any) => {
+  const handleUpdateStatus = async (orderId: string, newStatus: any) => {
     const updated = orders.map((o) => {
       if (o.orderId === orderId) {
         // If changing to completed, add 1 stamp to customer
         if (newStatus === "completed" && o.status !== "completed" && o.phone) {
-          import("@/lib/sukpaDb").then(({ addStampToCustomer }) => {
-            addStampToCustomer(o.phone, 1);
-          });
+          addStampToCustomer(o.phone, 1);
         }
         return { ...o, status: newStatus };
       }
       return o;
     });
     setOrders(updated);
-    localStorage.setItem("sukpa_orders", JSON.stringify(updated));
+    await updateOrderStatus(orderId, newStatus);
   };
 
   const handleSearchLoyalty = async (phoneToFind?: string) => {
@@ -150,14 +166,12 @@ export default function AdminPage() {
     const clean = query.replace(/[^0-9]/g, "");
     if (!clean) return;
 
-    const { getCustomerPoints } = await import("@/lib/sukpaDb");
     const found = await getCustomerPoints(clean);
     setLoyaltyCustomer(found);
   };
 
   const handleAdminAdjustStamp = async (amount: number) => {
     if (!loyaltyCustomer) return;
-    const { addStampToCustomer } = await import("@/lib/sukpaDb");
     const updated = await addStampToCustomer(loyaltyCustomer.phone, amount);
     setLoyaltyCustomer(updated);
     setLoyaltyMsg(`อัปเดตแต้มของ ${loyaltyCustomer.phone} เรียบร้อยแล้ว`);
@@ -166,7 +180,6 @@ export default function AdminPage() {
 
   const handleAdminRedeemFree = async () => {
     if (!loyaltyCustomer) return;
-    const { redeemFreeReward } = await import("@/lib/sukpaDb");
     const updated = await redeemFreeReward(loyaltyCustomer.phone);
     if (updated) {
       setLoyaltyCustomer(updated);
@@ -186,7 +199,7 @@ export default function AdminPage() {
     }
 
     const newOrderId = `SP-${Math.floor(100000 + Math.random() * 900000)}`;
-    const newOrder: SukpaOrder = {
+    const newOrder: any = {
       orderId: newOrderId,
       name: quickName || "ลูกค้า LINE",
       phone: quickPhone.replace(/[^0-9]/g, ""),
@@ -206,22 +219,13 @@ export default function AdminPage() {
       notes: quickNotes,
     };
 
-    const updated = [newOrder, ...orders];
-    setOrders(updated);
-    localStorage.setItem("sukpa_orders", JSON.stringify(updated));
+    setOrders([newOrder, ...orders]);
 
-    // Also auto-save customer profile and add 1 stamp
-    const { saveCustomer, addStampToCustomer } = await import("@/lib/sukpaDb");
-    await saveCustomer({
-      phone: newOrder.phone,
-      name: newOrder.name,
-      phase: newOrder.phase,
-      soi: newOrder.soi,
-      address_details: newOrder.addressDetails,
-    });
+    // บันทึกลง Supabase Database ทันที
+    await saveOrder(newOrder);
     await addStampToCustomer(newOrder.phone, 1);
 
-    alert(`สร้างออเดอร์ ${newOrderId} และบันทึกแต้มให้เบอร์ ${newOrder.phone} สำเร็จแล้ว!`);
+    alert(`สร้างออเดอร์ ${newOrderId} และบันทึกลงระบบสำเร็จแล้ว!`);
     setIsQuickOrderOpen(false);
     // reset form
     setQuickPhone("");
@@ -231,11 +235,11 @@ export default function AdminPage() {
   };
 
   // Delete order
-  const handleDeleteOrder = (orderId: string) => {
+  const handleDeleteOrder = async (orderId: string) => {
     if (confirm(`คุณต้องการลบออเดอร์ ${orderId} ใช่หรือไม่?`)) {
       const updated = orders.filter((o) => o.orderId !== orderId);
       setOrders(updated);
-      localStorage.setItem("sukpa_orders", JSON.stringify(updated));
+      await deleteOrder(orderId);
     }
   };
 
