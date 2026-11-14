@@ -146,6 +146,13 @@ export default function SukpaCalculator() {
     // บันทึกลง Supabase Database + LocalStorage ทันที
     await saveOrder(orderPayload);
 
+    // ยิงแจ้งเตือนเข้า Discord Webhook อัตโนมัติ
+    fetch("/api/notify-discord", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ order: orderPayload, type: "new_order" }),
+    }).catch((err) => console.warn("Discord notify error:", err));
+
     if (method === "promptpay") {
       router.push(`/payment?orderId=${orderPayload.orderId}`);
     } else {

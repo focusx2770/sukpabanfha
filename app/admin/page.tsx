@@ -232,6 +232,13 @@ export default function AdminPage() {
     await saveOrder(newOrder);
     await addStampToCustomer(newOrder.phone, 1);
 
+    // ยิงเข้า Discord Webhook ทันที
+    fetch("/api/notify-discord", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ order: newOrder, type: "new_order" }),
+    }).catch((err) => console.warn("Discord notify error:", err));
+
     alert(`สร้างออเดอร์ ${newOrderId} และบันทึกลงระบบสำเร็จแล้ว!`);
     setIsQuickOrderOpen(false);
     // reset form
@@ -248,6 +255,32 @@ export default function AdminPage() {
       setOrders(updated);
       await deleteOrder(orderId);
     }
+  };
+
+  // แชร์งานรับ-ส่งผ้าให้คนขับ/ไรเดอร์ ผ่าน LINE
+  const handleShareToRiderLine = (order: SukpaOrder) => {
+    const isPromptPay = order.paymentMethod === "promptpay";
+    const payText = isPromptPay
+      ? "ชำระผ่านพร้อมเพย์แล้ว (ตรวจสลิปแล้ว)"
+      : `⚠️ คนขับต้องเก็บเงินสด ฿${order.total} บาท (${order.paymentMethod === "cash_pickup" ? "ตอนรับผ้า" : "ตอนส่งผ้า"})`;
+
+    const text = `🛵 งานรับ-ส่งผ้า ซักป่ะ? บ้านฟ้าปิยรมณ์
+━━━━━━━━━━━━━━━━━━
+📋 รหัสออเดอร์: ${order.orderId}
+👤 ลูกค้า: ${order.name || "ลูกค้า"}
+📞 โทร: ${order.phone || "-"}
+📍 พิกัด: ${order.phase} ${order.soi ? `ซอย ${order.soi}` : ""}
+🏠 ที่อยู่: ${order.addressDetails || "-"}
+━━━━━━━━━━━━━━━━━━
+🧺 รายการผ้า:
+• ซัก: ${order.washName || "เครื่องซัก"}
+• อบ: ${order.dryName || "เครื่องอบ"} (${order.totalDryMinutes || 24} นาที)
+💰 การชำระเงิน: ${payText}
+${order.notes ? `📝 หมายเหตุ: ${order.notes}\n` : ""}━━━━━━━━━━━━━━━━━━
+🔗 ลิงก์อัปเดตงาน: https://sukpa.vercel.app/track?search=${order.orderId}`;
+
+    const lineShareUrl = `https://line.me/R/msg/text/?${encodeURIComponent(text)}`;
+    window.open(lineShareUrl, "_blank");
   };
 
   // Calculate statistics
@@ -1053,7 +1086,34 @@ export default function AdminPage() {
 
                     {/* Quick Status Update Selector */}
                     <div className="flex items-center gap-2 self-end md:self-auto flex-wrap">
-                      <span className="text-[11px] text-slate-400 font-bold">เปลี่ยนสถานะ:</span>
+                      {/* Button to share job to rider via LINE */}
+                      <button
+                        type="button"
+                        onClick={() => handleShareToRiderLine(order)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs shadow-xs active:scale-95 transition-all cursor-pointer"
+                        title="แชร์ใบงานนี้ให้ไรเดอร์/คนขับผ่าน LINE"
+                      >
+                        <span>🛵</span>
+                        <span>ส่งงานให้ไรเดอร์</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          fetch("/api/notify-discord", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ order, type: "new_order" }),
+                          }).then(() => alert("ยิงแจ้งเตือนเข้า Discord สำเร็จ!"));
+                        }}
+                        className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors border border-indigo-200 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                        title="กดส่งแจ้งเตือนเข้าห้อง Discord อีกครั้ง"
+                      >
+                        <span>📢</span>
+                        <span className="hidden sm:inline">Discord</span>
+                      </button>
+
+                      <span className="text-[11px] text-slate-400 font-bold ml-1">เปลี่ยนสถานะ:</span>
                       <select
                         value={order.status}
                         onChange={(e) => handleUpdateStatus(order.orderId, e.target.value)}

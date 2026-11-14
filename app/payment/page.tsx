@@ -105,6 +105,13 @@ function PaymentContent() {
     // บันทึกลง Supabase Database + LocalStorage
     await saveOrder(updatedOrder);
 
+    // ยิงแจ้งเตือนเข้า Discord Webhook ว่าแนบสลิปแล้ว
+    fetch("/api/notify-discord", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ order: updatedOrder, type: "slip_uploaded" }),
+    }).catch((err) => console.warn("Discord notify error:", err));
+
     setIsSubmitted(true);
   };
 
